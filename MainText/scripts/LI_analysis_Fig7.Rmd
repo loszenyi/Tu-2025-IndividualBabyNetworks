@@ -1,0 +1,402 @@
+---
+title: "Statsitical analysis of network lateralization"
+output: html_notebook
+---
+## Import packages
+```{r}
+library(lme4)
+library(lmerTest)
+library(ggplot2)
+library(performance)
+library(influence.ME)
+```
+## BCP (Dataset 2, Figure 6)
+```{r}
+data <-read.csv("LI_table_for_BCP.csv")
+data$sub_id <- factor(data$sub_id)
+data$LI <-data$LI_18 # change here for network 18
+```
+```{r}
+# Age effect on laterality with random intercept in subjects
+m_age_lang <- lmer(LI ~ age_yrs + (1 | sub_id), data = data)
+summary(m_age_lang)
+r2(m_age_lang)
+```
+
+```{r}
+# outlier?
+resid_std <- scale(residuals(m_age_lang))
+summary(resid_std)
+mean(abs(resid_std) > 3)
+
+infl <- influence(m_age_lang, group = "sub_id")
+cd <- cooks.distance(infl)
+summary(cd)
+max(cd)
+```
+
+```{r}
+# See standardized effect size to gauge whether effect size is small
+beta_std <- fixef(m_age_lang)["age_yrs"] *
+            sd(data$age_yrs, na.rm = TRUE) /
+            sd(data$LI, na.rm = TRUE)
+
+beta_std
+```
+```{r} 
+# Plot N.B. This 95% CI is for the fixed-effect (population-level) mean
+# Prediction grid
+age_grid <- seq(min(data$age_yrs, na.rm = TRUE),
+                max(data$age_yrs, na.rm = TRUE),
+                length.out = 200)
+pred_df <- data.frame(age_yrs = age_grid)
+
+# Fixed-effect design matrix
+X <- model.matrix(~ age_yrs, data = pred_df)
+
+# Fixed-effect coefficients and their covariance
+beta <- fixef(m_age_lang)
+V <- vcov(m_age_lang)  # covariance of fixed effects
+
+# Predicted mean and SE
+pred_df$LI_pred <- as.numeric(X %*% beta)
+pred_df$SE <- sqrt(diag(X %*% V %*% t(X)))
+
+# 95% CI
+pred_df$LI_lo <- pred_df$LI_pred - 1.96 * pred_df$SE
+pred_df$LI_hi <- pred_df$LI_pred + 1.96 * pred_df$SE
+
+ggplot(data, aes(x = age_yrs, y = LI)) +
+  geom_point(alpha = 0.4, size = 1) +
+  geom_ribbon(
+    data = pred_df,
+    aes(x = age_yrs, ymin = LI_lo, ymax = LI_hi),
+    inherit.aes = FALSE,
+    alpha = 0.2
+  ) +
+  geom_line(
+    data = pred_df,
+    aes(x = age_yrs, y = LI_pred),
+    inherit.aes = FALSE,
+    linewidth = 1
+  ) +
+  theme_classic() +
+  labs(x = "Age (years)", y = "Laterality index")
+
+ggsave(
+  "./Figure/Fig6_LI_vs_age.png",
+  width = 60,
+  height = 50,
+  units = "mm",
+  dpi = 300
+)
+```
+```{r}
+m_ <- lm(
+  FD_mean_total ~ age_yrs ,
+  data = data
+)
+summary(m_)
+```
+```{r}
+# Question: laterality association with language performance 
+m_lang <- lmer(
+  LI ~ age_yrs + mullen_VDQ + (1 | sub_id),
+  data = data
+)
+summary(m_lang)
+r2(m_lang)
+```
+```{r}
+# outlier?
+resid_std <- scale(residuals(m_lang))
+summary(resid_std)
+mean(abs(resid_std) > 3)
+
+infl <- influence(m_lang, group = "sub_id")
+cd <- cooks.distance(infl)
+summary(cd)
+max(cd)
+```
+```{r}
+# Plot scatter
+data$bhv <- data$mullen_VDQ
+bhv_grid <- seq(
+  min(data$bhv, na.rm = TRUE),
+  max(data$bhv, na.rm = TRUE),
+  length.out = 200
+)
+
+pred_df <- data.frame(
+  bhv = bhv_grid,
+  age_yrs = mean(data$age_yrs, na.rm = TRUE)
+)
+
+# Fixed-effect design matrix
+X <- model.matrix(~ age_yrs + bhv, data = pred_df)
+
+# Fixed effects and covariance
+beta <- fixef(m_lang)
+V <- vcov(m_lang)
+
+# Predicted mean
+pred_df$LI_pred <- as.numeric(X %*% beta)
+
+# Standard error
+pred_df$SE <- sqrt(diag(X %*% V %*% t(X)))
+
+# 95% confidence interval (fixed-effect mean)
+pred_df$LI_lo <- pred_df$LI_pred - 1.96 * pred_df$SE
+pred_df$LI_hi <- pred_df$LI_pred + 1.96 * pred_df$SE
+```
+```{r}
+ggplot(data, aes(x = bhv, y = LI)) +
+  geom_point(alpha = 0.4, size = 1) +
+  geom_ribbon(
+    data = pred_df,
+    aes(x = bhv, ymin = LI_lo, ymax = LI_hi),
+    inherit.aes = FALSE,
+    alpha = 0.2
+  ) +
+  geom_line(
+    data = pred_df,
+    aes(x = bhv, y = LI_pred),
+    inherit.aes = FALSE,
+    linewidth = 1
+  ) +
+  theme_classic() +
+  labs(
+    x = "VDQ",
+    y = "Laterality index"
+  )
+
+ggsave(
+  "./Figure/Fig6_LI_vs_bhv.png",
+  width = 60,
+  height = 50,
+  units = "mm",
+  dpi = 300
+)
+```
+```{r}
+# Permutation test
+set.seed(42)
+B <- 1000  # permutations
+data$bhv <-data$mullen_VDQ # change here for NVDQ
+
+# Your full model (observed)
+m_full <- lmer(LI ~ age_yrs + bhv + (1 | sub_id), data = data, REML = TRUE)
+beta_obs <- fixef(m_full)["bhv"]
+
+# Reduced model under H0 (no bhv)
+m_red <- lmer(LI ~ age_yrs + (1 | sub_id), data = data, REML = TRUE)
+
+y_hat <- fitted(m_red)
+e_hat <- resid(m_red)
+
+# Indices per subject (blocks)
+data$sub_id <- factor(data$sub_id)
+idx_by_sub <- split(seq_len(nrow(data)), data$sub_id)
+
+beta_perm <- numeric(B)
+
+for (b in seq_len(B)) {
+
+  # random sign per subject
+  signs <- sample(c(-1, 1), length(idx_by_sub), replace = TRUE)
+
+  e_star <- e_hat
+  j <- 1
+  for (sid in names(idx_by_sub)) {
+    idx <- idx_by_sub[[sid]]
+    e_star[idx] <- signs[j] * e_hat[idx]
+    j <- j + 1
+  }
+
+  # permuted outcome
+  data_perm <- data
+  data_perm$LI_perm <- y_hat + e_star
+
+  # refit full model to permuted outcome
+  m_b <- lmer(LI_perm ~ age_yrs + bhv + (1 | sub_id), data = data_perm, REML = TRUE)
+  beta_perm[b] <- fixef(m_b)["bhv"]
+}
+
+# two-sided permutation p-value
+p_perm <- mean(abs(beta_perm) >= abs(beta_obs))
+p_perm
+```
+```{r}
+# Question: does LI mediates the relationship between age and mullen scores [removed because random intercept would complicate interpretation, here it is fixed effects only]
+library(mediation)  
+model.M <- lm(LI ~ age_yrs, data = data)  
+model.Y <- lm(mullen_VDQ ~ age_yrs+LI, data = data)  
+results <- mediate(model.M, model.Y, treat = "age_yrs", mediator = "LI", boot = TRUE, sims = 5000)  
+summary(results)  
+```
+
+# eLABE (Dataset 1, Supplementary)
+```{r}
+data <-read.csv("LI_table_for_eLABE.csv")
+data$sub_id <- factor(data$sub_id)
+data$langcomp <- data$y2_langcomp  
+data$langcomp[114:nrow(data)] <- data$y3_langcomp[114:nrow(data)]
+data$motcomp <- data$y2_motcomp  
+data$motcomp[114:nrow(data)] <- data$y3_motcomp[114:nrow(data)]
+data <- data[complete.cases(data[, c("age_yrs", "LI_1", "langcomp")]), ]
+data$LI <-data$LI_18 # change here for network 18
+```
+```{r}
+# Model simple prediction with random intercept in subjects
+# Age effect on laterality
+m_age_lang <- lmer(LI ~ age_yrs + (1 | sub_id), data = data)
+summary(m_age_lang)
+```
+```{r}
+# outlier?
+resid_std <- scale(residuals(m_age_lang))
+summary(resid_std)
+mean(abs(resid_std) > 3)
+
+infl <- influence(m_age_lang, group = "sub_id")
+cd <- cooks.distance(infl)
+summary(cd)
+max(cd)
+```
+
+```{r}
+# Prediction grid
+age_grid <- seq(min(data$age_yrs, na.rm = TRUE),
+                max(data$age_yrs, na.rm = TRUE),
+                length.out = 200)
+pred_df <- data.frame(age_yrs = age_grid)
+
+# Fixed-effect design matrix
+X <- model.matrix(~ age_yrs, data = pred_df)
+
+# Fixed-effect coefficients and their covariance
+beta <- fixef(m_age_lang)
+V <- vcov(m_age_lang)  # covariance of fixed effects
+
+# Predicted mean and SE
+pred_df$LI_pred <- as.numeric(X %*% beta)
+pred_df$SE <- sqrt(diag(X %*% V %*% t(X)))
+
+# 95% CI
+pred_df$LI_lo <- pred_df$LI_pred - 1.96 * pred_df$SE
+pred_df$LI_hi <- pred_df$LI_pred + 1.96 * pred_df$SE
+
+ggplot(data, aes(x = age_yrs, y = LI)) +
+  geom_point(alpha = 0.4, size = 1) +
+  geom_ribbon(
+    data = pred_df,
+    aes(x = age_yrs, ymin = LI_lo, ymax = LI_hi),
+    inherit.aes = FALSE,
+    alpha = 0.2
+  ) +
+  geom_line(
+    data = pred_df,
+    aes(x = age_yrs, y = LI_pred),
+    inherit.aes = FALSE,
+    linewidth = 1
+  ) +
+  theme_classic() +
+  labs(x = "Age (years)", y = "Laterality index")
+
+ggsave(
+  "./Figure/SuppFig26_LI_vs_age.png",
+  width = 60,
+  height = 50,
+  units = "mm",
+  dpi = 300
+)
+```
+```{r}
+# Question: laterality association with language performance 
+m_lang <- lmer(
+  LI ~ age_yrs + langcomp + (1 | sub_id),
+  data = data
+)
+summary(m_lang)
+```
+```{r}
+# outlier?
+resid_std <- scale(residuals(m_lang))
+summary(resid_std)
+mean(abs(resid_std) > 3)
+
+infl <- influence(m_lang, group = "sub_id")
+cd <- cooks.distance(infl)
+summary(cd)
+max(cd)
+```
+```{r}
+# Plot scatter
+data$bhv <- data$langcomp
+bhv_grid <- seq(
+  min(data$bhv, na.rm = TRUE),
+  max(data$bhv, na.rm = TRUE),
+  length.out = 200
+)
+
+pred_df <- data.frame(
+  bhv = bhv_grid,
+  age_yrs = mean(data$age_yrs, na.rm = TRUE)
+)
+
+# Fixed-effect design matrix
+X <- model.matrix(~ age_yrs + bhv, data = pred_df)
+
+# Fixed effects and covariance
+beta <- fixef(m_lang)
+V <- vcov(m_lang)
+
+# Predicted mean
+pred_df$LI_pred <- as.numeric(X %*% beta)
+
+# Standard error
+pred_df$SE <- sqrt(diag(X %*% V %*% t(X)))
+
+# 95% confidence interval (fixed-effect mean)
+pred_df$LI_lo <- pred_df$LI_pred - 1.96 * pred_df$SE
+pred_df$LI_hi <- pred_df$LI_pred + 1.96 * pred_df$SE
+```
+```{r}
+ggplot(data, aes(x = bhv, y = LI)) +
+  geom_point(alpha = 0.4, size = 1) +
+  geom_ribbon(
+    data = pred_df,
+    aes(x = bhv, ymin = LI_lo, ymax = LI_hi),
+    inherit.aes = FALSE,
+    alpha = 0.2
+  ) +
+  geom_line(
+    data = pred_df,
+    aes(x = bhv, y = LI_pred),
+    inherit.aes = FALSE,
+    linewidth = 1
+  ) +
+  theme_classic() +
+  labs(
+    x = "Language composite",
+    y = "Laterality index"
+  )
+
+ggsave(
+  "./Figure/SuppFig26_LI_vs_bhv.png",
+  width = 60,
+  height = 50,
+  units = "mm",
+  dpi = 300
+)
+```
+```{r} 
+# [removed because it cannot handle random effect] Question: does LI mediates the relationship between age and language
+library(mediation)  
+model.M <- lm(LI ~ age_yrs, data = data)  
+model.Y <- lm(langcomp ~ age_yrs+LI, data = data)  
+results <- mediate(model.M, model.Y, treat = "age_yrs", mediator = "LI", boot = TRUE, sims = 5000)  
+summary(results)  
+```
+
+
